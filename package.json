@@ -1,0 +1,19 @@
+{
+  "name": "azib-app",
+  "version": "0.0.1",
+  "private": true,
+  "packageManager": "pnpm@9.12.3",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "format": "prettier --write \"**/*.{ts,tsx,md,json}\"",
+    "typecheck": "turbo run typecheck",
+    "clean": "turbo run clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3",
+    "turbo": "^2.2.3",
+    "typescript": "^5.6.3"
+  }
+}
