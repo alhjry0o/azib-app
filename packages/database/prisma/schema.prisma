@@ -1,0 +1,1173 @@
+// =============================================================================
+// AZIB | عازب — Final Database Schema
+// Phase 03: Hardened, Constitution-Aligned, Production-Ready Draft
+// =============================================================================
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/client"
+}
+
+// =============================================================================
+// Identity & Geography
+// =============================================================================
+
+model User {
+  id                String     @id @default(uuid()) @db.Uuid
+  /// الهاتف يجب أن يُخزّن بصيغة E.164 اليمنية: +967...
+  phone             String
+  email             String?
+  passwordHash      String?
+  status            UserStatus @default(PENDING)
+  privacyConsent    Boolean    @default(false)
+  privacyConsentAt  DateTime?  @db.Timestamptz(6)
+  termsAcceptedAt   DateTime?  @db.Timestamptz(6)
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  profile  UserProfile?
+  roles    UserRole[]
+  verifier Verifier?
+
+  verificationRequestsAsSubject   VerificationRequest[] @relation("VerificationSubject")
+  verificationRequestsAsRequester VerificationRequest[] @relation("VerificationRequester")
+
+  assistanceRequests          AssistanceRequest[] @relation("AssistanceApplicant")
+  assignedAssistanceRequests  AssistanceRequest[] @relation("AssistanceAssignedReviewer")
+  assistanceReviews           AssistanceReview[]
+  assistanceDecisions         AssistanceDecision[]
+  assistanceAppealsReviewed   AssistanceAppeal[]
+
+  merchantsOwned   Merchant[]          @relation("MerchantOwner")
+  offerRedemptions OfferRedemption[]
+
+  organizedGroupWeddings GroupWedding[]      @relation("GroupOrganizer")
+  groupParticipations    GroupParticipant[]
+  groupLedgerEntries     GroupLedgerEntry[]
+
+  uploadedFiles File[]
+  notifications Notification[]
+  auditLogs     AuditLog[] @relation("AuditActor")
+
+  @@index([phone])
+  @@index([email])
+  @@index([status])
+  @@index([createdAt])
+  @@map("users")
+}
+
+model UserProfile {
+  id             String         @id @default(uuid()) @db.Uuid
+  userId         String         @unique
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fullName       String
+  gender         Gender?
+  birthDate      DateTime?      @db.Date
+  governorateId  String?        @db.Uuid
+  directorateId  String?        @db.Uuid
+  neighborhoodId String?        @db.Uuid
+  addressSummary String?
+  maritalStatus  MaritalStatus?
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  governorate  Governorate?  @relation(fields: [governorateId], references: [id], onDelete: Restrict)
+  directorate  Directorate?  @relation(fields: [directorateId], references: [id], onDelete: Restrict)
+  neighborhood Neighborhood? @relation(fields: [neighborhoodId], references: [id], onDelete: Restrict)
+
+  @@index([governorateId])
+  @@index([directorateId])
+  @@index([neighborhoodId])
+  @@map("user_profiles")
+}
+
+model Governorate {
+  id     String  @id @default(uuid()) @db.Uuid
+  nameAr String  @unique
+  nameEn String? @unique
+  code   String? @unique
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  directorates         Directorate[]
+  userProfiles         UserProfile[]
+  assistanceRequests   AssistanceRequest[]
+  merchantBranches     MerchantBranch[]
+  groupWeddings        GroupWedding[]
+
+  @@map("governorates")
+}
+
+model Directorate {
+  id            String      @id @default(uuid()) @db.Uuid
+  governorateId String      @db.Uuid
+  governorate   Governorate @relation(fields: [governorateId], references: [id], onDelete: Restrict)
+  nameAr        String
+  nameEn        String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  neighborhoods      Neighborhood[]
+  userProfiles       UserProfile[]
+  assistanceRequests AssistanceRequest[]
+  merchantBranches   MerchantBranch[]
+  groupWeddings      GroupWedding[]
+
+  @@unique([governorateId, nameAr])
+  @@index([governorateId])
+  @@map("directorates")
+}
+
+model Neighborhood {
+  id            String          @id @default(uuid()) @db.Uuid
+  directorateId String          @db.Uuid
+  directorate   Directorate     @relation(fields: [directorateId], references: [id], onDelete: Restrict)
+  nameAr        String
+  type          NeighborhoodType?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  userProfiles       UserProfile[]
+  assistanceRequests AssistanceRequest[]
+  merchantBranches   MerchantBranch[]
+  groupWeddings      GroupWedding[]
+
+  @@unique([directorateId, nameAr])
+  @@index([directorateId])
+  @@map("neighborhoods")
+}
+
+// =============================================================================
+// RBAC
+// =============================================================================
+
+model Role {
+  id          String  @id @default(uuid()) @db.Uuid
+  name        String  @unique
+  description String?
+  isSystem    Boolean @default(false)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String  @id @default(uuid()) @db.Uuid
+  key         String  @unique
+  description String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model UserRole {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  roleId     String   @db.Uuid
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  assignedAt DateTime @default(now()) @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  id           String     @id @default(uuid()) @db.Uuid
+  roleId       String     @db.Uuid
+  permissionId String     @db.Uuid
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+// =============================================================================
+// Community Verification
+// =============================================================================
+
+model Verifier {
+  id         String       @id @default(uuid()) @db.Uuid
+  userId     String       @unique
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type       VerifierType
+  /// مستوى الثقة من 1 إلى 5، ويتم ضبطه عبر طبقة الخدمة.
+  trustLevel Int          @default(1)
+  isActive   Boolean      @default(true)
+  notes      String?
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  endorsements Endorsement[]
+
+  @@index([type])
+  @@index([isActive])
+  @@map("verifiers")
+}
+
+model VerificationRequest {
+  id            String                 @id @default(uuid()) @db.Uuid
+  userId        String                 @db.Uuid
+  user          User                   @relation("VerificationSubject", fields: [userId], references: [id], onDelete: Restrict)
+  requestedById String?                @db.Uuid
+  requestedBy   User?                  @relation("VerificationRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+  targetType    VerificationTargetType
+  status        VerificationStatus     @default(PENDING)
+  notes         String?
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  endorsements Endorsement[]
+
+  @@index([userId])
+  @@index([requestedById])
+  @@index([status])
+  @@index([targetType])
+  @@index([status, createdAt])
+  @@map("verification_requests")
+}
+
+model Endorsement {
+  id              String            @id @default(uuid()) @db.Uuid
+  requestId       String            @db.Uuid
+  request         VerificationRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  verifierId      String            @db.Uuid
+  verifier        Verifier          @relation(fields: [verifierId], references: [id], onDelete: Restrict)
+  type            EndorsementType
+  /// مستوى الثقة من 1 إلى 5، ويتم ضبطه عبر طبقة الخدمة.
+  confidenceLevel Int
+  notes           String?
+  status          EndorsementStatus @default(ACTIVE)
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@unique([requestId, verifierId, type])
+  @@index([requestId])
+  @@index([verifierId])
+  @@map("endorsements")
+}
+
+// =============================================================================
+// Marriage Assistance
+// =============================================================================
+
+model AssistanceRequest {
+  id                       String                  @id @default(uuid()) @db.Uuid
+  userId                   String                  @db.Uuid
+  user                     User                    @relation("AssistanceApplicant", fields: [userId], references: [id], onDelete: Restrict)
+  assignedReviewerId       String?                 @db.Uuid
+  assignedReviewer         User?                   @relation("AssistanceAssignedReviewer", fields: [assignedReviewerId], references: [id], onDelete: SetNull)
+
+  status                   AssistanceRequestStatus @default(DRAFT)
+  type                     AssistanceType
+  urgency                  AssistanceUrgency       @default(MEDIUM)
+
+  governorateId            String?                 @db.Uuid
+  directorateId            String?                 @db.Uuid
+  neighborhoodId           String?                 @db.Uuid
+
+  expectedMarriageDate     DateTime?               @db.Date
+  engagementProofStatus    EngagementProofStatus   @default(NOT_PROVIDED)
+
+  targetAmount             Decimal                 @db.Decimal(18,0)
+  incomeEstimate           Decimal?                @db.Decimal(18,0)
+  rentAmount               Decimal?                @db.Decimal(18,0)
+  monthlyObligationsAmount Decimal?                @db.Decimal(18,0)
+  currentSupportAmount     Decimal?                @db.Decimal(18,0)
+  hasAlternativeSupport    Boolean?
+  familySupportStatus      FamilySupportStatus?
+  assetsDeclarationSummary String?
+
+  isEngaged                Boolean                 @default(false)
+  hasWork                  Boolean                 @default(false)
+  dependentsCount          Int                     @default(0)
+
+  privacyConsent           Boolean                 @default(false)
+  privacyConsentAt         DateTime?               @db.Timestamptz(6)
+
+  priorityScore            Int?
+  applicantNotes           String?
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  governorate  Governorate?  @relation(fields: [governorateId], references: [id], onDelete: Restrict)
+  directorate  Directorate?  @relation(fields: [directorateId], references: [id], onDelete: Restrict)
+  neighborhood Neighborhood? @relation(fields: [neighborhoodId], references: [id], onDelete: Restrict)
+
+  items       AssistanceItem[]
+  documents   AssistanceDocument[]
+  reviews     AssistanceReview[]
+  decision    AssistanceDecision?
+  appeals     AssistanceAppeal[]
+  fulfillment AssistanceFulfillment?
+
+  // ملاحظة:
+  // يتم منع وجود أكثر من طلب نشط لكل مستخدم عبر partial unique index
+  // في ملف القيود اليدوية، لأن الحالة النشطة تعتمد على قائمة حالات وليس مجرد عمود واحد.
+  @@index([userId])
+  @@index([assignedReviewerId])
+  @@index([status])
+  @@index([governorateId])
+  @@index([directorateId])
+  @@index([neighborhoodId])
+  @@index([status, createdAt])
+  @@map("assistance_requests")
+}
+
+model AssistanceItem {
+  id            String             @id @default(uuid()) @db.Uuid
+  requestId     String             @db.Uuid
+  request       AssistanceRequest  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  itemType      AssistanceItemType
+  description   String?
+  estimatedCost Decimal            @db.Decimal(18,0)
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([requestId])
+  @@map("assistance_items")
+}
+
+model AssistanceDocument {
+  id                 String                     @id @default(uuid()) @db.Uuid
+  requestId          String                     @db.Uuid
+  request            AssistanceRequest          @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  fileId             String                     @db.Uuid
+  file               File                       @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  /// مسار/مفتاح تخزين خاص، وليس رابطاً عاماً مباشراً.
+  fileUrl            String
+  docType            AssistanceDocumentType
+  verificationStatus DocumentVerificationStatus @default(PENDING)
+  reviewerNotes      String?
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([requestId])
+  @@index([fileId])
+  @@index([docType])
+  @@map("assistance_documents")
+}
+
+model AssistanceReview {
+  id             String               @id @default(uuid()) @db.Uuid
+  requestId      String               @db.Uuid
+  request        AssistanceRequest    @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  reviewerId     String               @db.Uuid
+  reviewer       User                 @relation(fields: [reviewerId], references: [id], onDelete: Restrict)
+  recommendation ReviewRecommendation
+  score          Int?
+  internalNotes  String?
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([requestId])
+  @@index([reviewerId])
+  @@map("assistance_reviews")
+}
+
+model AssistanceDecision {
+  id             String                 @id @default(uuid()) @db.Uuid
+  requestId      String                 @unique
+  request        AssistanceRequest      @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  decisionType   AssistanceDecisionType
+  approvedAmount Decimal?               @db.Decimal(18,0)
+  reason         String
+  decidedById    String?                @db.Uuid
+  decidedBy      User?                  @relation(fields: [decidedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([decidedById])
+  @@map("assistance_decisions")
+}
+
+model AssistanceAppeal {
+  id           String       @id @default(uuid()) @db.Uuid
+  requestId    String       @db.Uuid
+  request      AssistanceRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  reason       String
+  status       AppealStatus @default(PENDING)
+  outcome      String?
+  reviewedById String?      @db.Uuid
+  reviewedBy   User?        @relation(fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([requestId])
+  @@index([status])
+  @@index([reviewedById])
+  @@map("assistance_appeals")
+}
+
+model AssistanceFulfillment {
+  id                String             @id @default(uuid()) @db.Uuid
+  requestId         String             @unique
+  request           AssistanceRequest  @relation(fields: [requestId], references: [id], onDelete: Restrict)
+
+  approvedAmount    Decimal            @db.Decimal(18,0)
+  allocatedAmount   Decimal            @default(0) @db.Decimal(18,0)
+  deliveredAmount   Decimal            @default(0) @db.Decimal(18,0)
+  /// يُحسب ويفضل أن يُدار عبر trigger:
+  /// remainingAmount = approvedAmount - deliveredAmount
+  remainingAmount   Decimal            @default(0) @db.Decimal(18,0)
+
+  fulfillmentStatus FulfillmentStatus  @default(NOT_STARTED)
+  deliveryMethod    DeliveryMethod?
+  partnerNote       String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([fulfillmentStatus])
+  @@map("assistance_fulfillments")
+}
+
+// =============================================================================
+// Merchants & Offers
+// =============================================================================
+
+model Merchant {
+  id           String           @id @default(uuid()) @db.Uuid
+  ownerId      String           @db.Uuid
+  owner        User             @relation("MerchantOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  businessName String
+  category     MerchantCategory
+  description  String?
+  isVerified   Boolean          @default(false)
+  status       MerchantStatus   @default(PENDING_REVIEW)
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  branches      MerchantBranch[]
+  offers        Offer[]
+  groupServices GroupService[]
+
+  @@index([ownerId])
+  @@index([status])
+  @@index([category])
+  @@map("merchants")
+}
+
+model MerchantBranch {
+  id             String         @id @default(uuid()) @db.Uuid
+  merchantId     String         @db.Uuid
+  merchant       Merchant       @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  name           String
+  governorateId  String         @db.Uuid
+  governorate    Governorate    @relation(fields: [governorateId], references: [id], onDelete: Restrict)
+  directorateId  String?        @db.Uuid
+  directorate    Directorate?   @relation(fields: [directorateId], references: [id], onDelete: Restrict)
+  neighborhoodId String?        @db.Uuid
+  neighborhood   Neighborhood?  @relation(fields: [neighborhoodId], references: [id], onDelete: Restrict)
+  address        String?
+  /// الهاتف يجب أن يُخزّن بصيغة E.164 اليمنية: +967...
+  phone          String
+  isActive       Boolean        @default(true)
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  offers           Offer[]
+  offerRedemptions OfferRedemption[]
+
+  @@index([merchantId])
+  @@index([governorateId])
+  @@index([directorateId])
+  @@index([neighborhoodId])
+  @@index([isActive])
+  @@map("merchant_branches")
+}
+
+model Offer {
+  id                 String      @id @default(uuid()) @db.Uuid
+  merchantId         String      @db.Uuid
+  branchId           String?     @db.Uuid
+  merchant           Merchant    @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+  branch             MerchantBranch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
+
+  title              String
+  description        String?
+  originalPrice      Decimal     @db.Decimal(18,0)
+  discountedPrice    Decimal     @db.Decimal(18,0)
+  discountPercentage Decimal?    @db.Decimal(5,2)
+
+  startDate          DateTime    @db.Timestamptz(6)
+  endDate            DateTime    @db.Timestamptz(6)
+
+  status             OfferStatus @default(DRAFT)
+  maxRedemptions     Int?
+  currentRedemptions Int         @default(0)
+
+  eligibilityRule    String?
+  requiresApproval   Boolean     @default(false)
+  terms              String?
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  redemptions OfferRedemption[]
+
+  // يتم ضبط:
+  // - discountedPrice <= originalPrice
+  // - endDate > startDate
+  // - currentRedemptions <= maxRedemptions
+  // عبر قيود SQL في ملف القيود.
+  @@index([merchantId])
+  @@index([branchId])
+  @@index([status])
+  @@index([endDate])
+  @@index([status, endDate])
+  @@map("offers")
+}
+
+model OfferRedemption {
+  id         String           @id @default(uuid()) @db.Uuid
+  offerId    String           @db.Uuid
+  userId     String           @db.Uuid
+  branchId   String?          @db.Uuid
+
+  offer      Offer            @relation(fields: [offerId], references: [id], onDelete: Restrict)
+  user       User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  branch     MerchantBranch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+
+  code       String           @unique
+  status     RedemptionStatus @default(ISSUED)
+
+  issuedAt   DateTime         @default(now()) @db.Timestamptz(6)
+  redeemedAt DateTime?        @db.Timestamptz(6)
+  expiresAt  DateTime?        @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  // يتم منع ازدواج الاسترداد النشط عبر partial unique index:
+  // ISSUED أو REDEEMED لنفس المستخدم ونفس العرض.
+  @@index([offerId])
+  @@index([userId])
+  @@index([branchId])
+  @@index([status])
+  @@map("offer_redemptions")
+}
+
+// =============================================================================
+// Group Weddings
+// =============================================================================
+
+model GroupWedding {
+  id                     String                 @id @default(uuid()) @db.Uuid
+  organizerId            String                 @db.Uuid
+  organizer              User                   @relation("GroupOrganizer", fields: [organizerId], references: [id], onDelete: Restrict)
+
+  title                  String
+  description            String?
+  status                 GroupWeddingStatus     @default(DRAFT)
+  visibility             GroupWeddingVisibility @default(INVITATION_ONLY)
+
+  governorateId          String                 @db.Uuid
+  directorateId          String?                @db.Uuid
+  neighborhoodId         String?                @db.Uuid
+
+  governorate            Governorate            @relation(fields: [governorateId], references: [id], onDelete: Restrict)
+  directorate            Directorate?           @relation(fields: [directorateId], references: [id], onDelete: Restrict)
+  neighborhood           Neighborhood?          @relation(fields: [neighborhoodId], references: [id], onDelete: Restrict)
+
+  venueText              String?
+  plannedDate            DateTime?              @db.Date
+
+  joinDeadline           DateTime?              @db.Timestamptz(6)
+  confirmationDeadline   DateTime?              @db.Timestamptz(6)
+  freeWithdrawalDeadline DateTime?              @db.Timestamptz(6)
+  cancellationPolicyText String?
+
+  minParticipants        Int                    @default(2)
+  maxParticipants        Int                    @default(7)
+
+  /// إجمالي التكاليف المشتركة الفعلية.
+  sharedCostTotal        Decimal                @default(0) @db.Decimal(18,0)
+  /// إجمالي التكاليف الخاصة.
+  privateCostTotal       Decimal                @default(0) @db.Decimal(18,0)
+  /// إجمالي الحصص المخصصة من المشاركين المؤكدين.
+  allocatedSharedCost    Decimal                @default(0) @db.Decimal(18,0)
+  costPerParticipant     Decimal?               @db.Decimal(18,0)
+
+  currentParticipantsCount Int                  @default(0)
+  currentConfirmedCount    Int                  @default(0)
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  participants  GroupParticipant[]
+  services      GroupService[]
+  expenses      GroupExpense[]
+  ledgerEntries GroupLedgerEntry[]
+
+  // القواعد المالية المهمة تُفرض عبر قيود و triggers:
+  // - minParticipants >= 2
+  // - maxParticipants <= 7
+  // - minParticipants <= maxParticipants
+  // - عند الإغلاق المالي: allocatedSharedCost = sharedCostTotal
+  @@index([organizerId])
+  @@index([status])
+  @@index([governorateId])
+  @@index([directorateId])
+  @@index([neighborhoodId])
+  @@index([plannedDate])
+  @@index([status, plannedDate])
+  @@map("group_weddings")
+}
+
+model GroupParticipant {
+  id                  String            @id @default(uuid()) @db.Uuid
+  groupId             String            @db.Uuid
+  userId              String            @db.Uuid
+
+  group               GroupWedding      @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  user                User              @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  status              ParticipantStatus @default(REQUESTED)
+  isOrganizer         Boolean           @default(false)
+  approvedByOrganizer Boolean           @default(false)
+
+  financialShare      Decimal           @default(0) @db.Decimal(18,0)
+  paymentStatus       PaymentStatus     @default(PENDING)
+  guestCount          Int               @default(0)
+
+  joinedAt            DateTime          @default(now()) @db.Timestamptz(6)
+  withdrawnAt         DateTime?         @db.Timestamptz(6)
+  withdrawalReason    String?
+
+  notes               String?
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  ledgerEntries GroupLedgerEntry[]
+
+  @@unique([groupId, userId])
+  @@index([groupId])
+  @@index([userId])
+  @@index([status])
+  @@map("group_participants")
+}
+
+model GroupService {
+  id            String             @id @default(uuid()) @db.Uuid
+  groupId       String             @db.Uuid
+  group         GroupWedding       @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  serviceType   GroupServiceType
+  merchantId    String?            @db.Uuid
+  merchant      Merchant?          @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+  description   String?
+  estimatedCost Decimal            @db.Decimal(18,0)
+  finalCost     Decimal?           @db.Decimal(18,0)
+  isShared      Boolean            @default(true)
+  status        GroupServiceStatus @default(DRAFT)
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  expenses GroupExpense[]
+
+  @@index([groupId])
+  @@index([merchantId])
+  @@index([serviceType])
+  @@map("group_services")
+}
+
+model GroupExpense {
+  id          String             @id @default(uuid()) @db.Uuid
+  groupId     String             @db.Uuid
+  group       GroupWedding       @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  serviceId   String?            @db.Uuid
+  service     GroupService?      @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  description String
+  amount      Decimal            @db.Decimal(18,0)
+  splitMethod ExpenseSplitMethod @default(EQUAL)
+  isShared    Boolean            @default(true)
+  status      ExpenseStatus      @default(PENDING)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  // لا يُنصح بالحذف الفعلي للسجلات المالية.
+  // التسوية تكون عبر GroupLedgerEntry وليس عبر حذف المصروف.
+  @@index([groupId])
+  @@index([serviceId])
+  @@index([status])
+  @@map("group_expenses")
+}
+
+model GroupLedgerEntry {
+  id            String            @id @default(uuid()) @db.Uuid
+  groupId       String            @db.Uuid
+  group         GroupWedding      @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  participantId String?           @db.Uuid
+  participant   GroupParticipant? @relation(fields: [participantId], references: [id], onDelete: Restrict)
+
+  entryType     LedgerEntryType
+  amount        Decimal           @db.Decimal(18,0)
+  balanceAfter  Decimal           @db.Decimal(18,0)
+  reason        String
+
+  referenceType String?
+  referenceId   String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  // هذا السجل مالي وحساس:
+  // - لا حذف.
+  // - لا تعديل مباشر.
+  // - التسويات تكون عبر قيد جديد من نوع ADJUSTMENT.
+  // يتم فرض ذلك عبر trigger في ملف القيود.
+  @@index([groupId])
+  @@index([participantId])
+  @@index([entryType])
+  @@index([createdAt])
+  @@index([groupId, createdAt])
+  @@map("group_ledger_entries")
+}
+
+// =============================================================================
+// Files & System
+// =============================================================================
+
+model File {
+  id         String         @id @default(uuid()) @db.Uuid
+  uploaderId String?        @db.Uuid
+  uploader   User?          @relation(fields: [uploaderId], references: [id], onDelete: SetNull)
+  bucket     String
+  path       String
+  mimeType   String
+  sizeBytes  BigInt         @db.BigInt
+  visibility FileVisibility @default(PRIVATE)
+  hash       String?
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  assistanceDocuments AssistanceDocument[]
+
+  @@unique([bucket, path])
+  @@index([uploaderId])
+  @@index([visibility])
+  @@map("files")
+}
+
+model Notification {
+  id       String              @id @default(uuid()) @db.Uuid
+  userId   String              @db.Uuid
+  user     User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title    String
+  body     String
+  payload  Json?
+  channel  NotificationChannel @default(IN_APP)
+  status   NotificationStatus  @default(PENDING)
+  readAt   DateTime?           @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([userId, status])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id         String  @id @default(uuid()) @db.Uuid
+  actorId    String? @db.Uuid
+  actor      User?   @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String
+  entityId   String?
+  oldValues  Json?
+  newValues  Json?
+  ipAddress  String?
+  userAgent  String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  // سجل التدقيق يجب أن يكون append-only.
+  // يتم منع التعديل والحذف عبر trigger في ملف القيود.
+  @@index([actorId])
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([createdAt])
+  @@index([entityType, entityId, createdAt])
+  @@map("audit_logs")
+}
+
+// =============================================================================
+// Enums
+// =============================================================================
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  BANNED
+  DEACTIVATED
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
+
+enum MaritalStatus {
+  SINGLE
+  ENGAGED
+  MARRIED
+  DIVORCED
+  WIDOWED
+}
+
+enum NeighborhoodType {
+  HARA
+  AREA
+  VILLAGE
+  OTHER
+}
+
+enum VerificationTargetType {
+  USER_PROFILE
+  ASSISTANCE_REQUEST
+  MERCHANT
+  GROUP_WEDDING
+}
+
+enum VerificationStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  REJECTED
+  EXPIRED
+  CANCELLED
+}
+
+enum VerifierType {
+  AQIL
+  IMAM
+  EMPLOYER
+  COMMUNITY_LEADER
+}
+
+enum EndorsementType {
+  RESIDENCE
+  CHARACTER
+  FINANCIAL_NEED
+  EMPLOYMENT
+  MARRIAGE_INTENT
+  FAMILY_SITUATION
+}
+
+enum EndorsementStatus {
+  ACTIVE
+  REVOKED
+  SUPERSEDED
+}
+
+enum AssistanceRequestStatus {
+  DRAFT
+  PENDING_DOCUMENTS
+  SUBMITTED
+  UNDER_COMMUNITY_VERIFICATION
+  UNDER_COMMITTEE_REVIEW
+  NEEDS_MORE_INFO
+  APPROVED
+  APPROVED_PARTIALLY
+  REJECTED
+  APPEALED
+  IN_DELIVERY
+  COMPLETED
+  CLOSED_NO_ACTION
+  WITHDRAWN
+  ARCHIVED
+}
+
+enum AssistanceType {
+  FINANCIAL
+  IN_KIND
+}
+
+enum AssistanceUrgency {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum AssistanceItemType {
+  MAHR
+  GOLD
+  RENT
+  FURNITURE
+  APPLIANCES
+  CLOTHING
+  VENUE
+  OTHER
+}
+
+enum AssistanceDocumentType {
+  ID_CARD
+  FAMILY_CARD
+  ENGAGEMENT_PROOF
+  INCOME_PROOF
+  RESIDENCE_PROOF
+  ENDORSEMENT_LETTER
+  OTHER
+}
+
+enum DocumentVerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  EXPIRED
+}
+
+enum EngagementProofStatus {
+  NOT_PROVIDED
+  PENDING
+  VERIFIED
+  REJECTED
+  EXPIRED
+}
+
+enum FamilySupportStatus {
+  NONE
+  PARTIAL
+  FULL
+  UNKNOWN
+}
+
+enum ReviewRecommendation {
+  APPROVE
+  REJECT
+  NEEDS_MORE_INFO
+  ESCALATE
+}
+
+enum AssistanceDecisionType {
+  APPROVED
+  APPROVED_PARTIALLY
+  REJECTED
+}
+
+enum AppealStatus {
+  PENDING
+  UNDER_REVIEW
+  UPHELD
+  DENIED
+  WITHDRAWN
+}
+
+enum FulfillmentStatus {
+  NOT_STARTED
+  PENDING_ALLOCATION
+  PARTIALLY_ALLOCATED
+  FULLY_ALLOCATED
+  PENDING_DELIVERY
+  PARTIALLY_DELIVERED
+  DELIVERED
+  COMPLETED
+  CANCELLED
+}
+
+enum DeliveryMethod {
+  IN_KIND
+  VOUCHER
+  DIRECT_TO_VENDOR
+  CASH_BY_PARTNER
+  OTHER
+}
+
+enum MerchantStatus {
+  PENDING_REVIEW
+  VERIFIED
+  REJECTED
+  SUSPENDED
+  ARCHIVED
+}
+
+enum MerchantCategory {
+  HALL
+  CATERING
+  GOLD_JEWELRY
+  FURNITURE
+  APPLIANCES
+  CLOTHING
+  PHOTOGRAPHY
+  DECOR
+  TRANSPORT
+  BEAUTY
+  OTHER
+}
+
+enum OfferStatus {
+  DRAFT
+  PENDING_REVIEW
+  ACTIVE
+  PAUSED
+  REJECTED
+  EXPIRED
+  ARCHIVED
+}
+
+enum RedemptionStatus {
+  ISSUED
+  REDEEMED
+  CANCELLED
+  EXPIRED
+}
+
+enum GroupWeddingStatus {
+  DRAFT
+  OPEN_FOR_JOINING
+  PENDING_MINIMUM
+  PENDING_CONFIRMATIONS
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  ARCHIVED
+}
+
+enum GroupWeddingVisibility {
+  PRIVATE
+  INVITATION_ONLY
+}
+
+enum ParticipantStatus {
+  INVITED
+  REQUESTED
+  ACCEPTED
+  CONFIRMED
+  WITHDRAWN
+  REMOVED
+}
+
+enum PaymentStatus {
+  PENDING
+  PARTIAL
+  SETTLED
+  NOT_APPLICABLE
+}
+
+enum GroupServiceType {
+  HALL
+  CATERING
+  DECOR
+  PHOTOGRAPHY
+  VIDEO
+  TRANSPORT
+  AUDIO
+  OTHER
+}
+
+enum GroupServiceStatus {
+  DRAFT
+  CONFIRMED
+  CANCELLED
+  SETTLED
+}
+
+enum ExpenseSplitMethod {
+  EQUAL
+  BY_INVITEES
+  CUSTOM
+}
+
+enum ExpenseStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  SETTLED
+}
+
+enum LedgerEntryType {
+  CHARGE
+  PAYMENT
+  ADJUSTMENT
+}
+
+enum NotificationChannel {
+  IN_APP
+  SMS
+  EMAIL
+  PUSH
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  DELIVERED
+  FAILED
+  READ
+  ARCHIVED
+}
+
+enum FileVisibility {
+  PRIVATE
+  PUBLIC
+}
